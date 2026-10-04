@@ -1,16 +1,12 @@
 import React from 'react'
 import { fmtMin, fmtTime } from '../util.js'
+import WindowCoverage from './WindowCoverage.jsx'
 
-/** 结果面板：逐时采样（快览）与连续遮挡时段（正式口径）严格分区展示。 */
-export default function ResultsPanel({ run, result, onHoverInterval, onTrace }) {
-  if (!run || !result) {
-    return <div className="panel muted">选择测点后显示结果。运行分析后点击三维视图中的测点球。</div>
-  }
+function PointResult({ run, result, onHoverInterval, onTrace }) {
   const s = result.summary
   return (
-    <div className="panel">
-      <h3>测点 #{result.point_id}</h3>
-      <div className="disclaimer">{run.disclaimer}</div>
+    <div className="point-result">
+      <h4>测点 #{result.point_id} · 单点结果</h4>
       <table className="summary">
         <tbody>
           <tr><td>白天时长</td><td>{fmtMin(s.daylight_minutes)}</td></tr>
@@ -20,7 +16,7 @@ export default function ResultsPanel({ run, result, onHoverInterval, onTrace }) 
       </table>
       <div className="muted small">{s.criterion}</div>
 
-      <h4>连续遮挡/日照时段（步长 {run.step_minutes} min）</h4>
+      <div className="muted small">连续遮挡/日照时段（步长 {run.step_minutes} min）</div>
       <div className="intervals">
         {result.continuous_intervals
           .filter((iv) => iv.status !== 'night')
@@ -35,7 +31,7 @@ export default function ResultsPanel({ run, result, onHoverInterval, onTrace }) 
           ))}
       </div>
 
-      <h4>逐时采样（仅整点快览，<u>不可</u>累加为日照时长）</h4>
+      <div className="muted small">逐时采样（仅整点快览，<u>不可</u>累加为日照时长）</div>
       <div className="hourly">
         {result.hourly_samples.map((h, i) => (
           <span key={i} className={`cell ${h.status}`}
@@ -45,6 +41,26 @@ export default function ResultsPanel({ run, result, onHoverInterval, onTrace }) 
         ))}
       </div>
       <button onClick={() => onTrace?.(result.point_id)}>追查该点全部遮挡物</button>
+    </div>
+  )
+}
+
+/** 结果面板：窗面测点覆盖（教学：一个点晒到≠整窗晒到）在上，
+    原单点结果（逐时快览 / 连续时段）在下，两者均保留。 */
+export default function ResultsPanel({ run, result, payload, activeTime,
+  onHoverInterval, onTrace, onPickTime, onSelectPoint }) {
+  if (!run) {
+    return <div className="panel muted">选择测点后显示结果。运行分析后点击三维视图中的测点球。</div>
+  }
+  return (
+    <div className="panel">
+      <WindowCoverage run={run} payload={payload} activeTime={activeTime}
+        onPickTime={onPickTime} onSelectPoint={onSelectPoint} />
+      <hr />
+      {result
+        ? <PointResult run={run} result={result}
+            onHoverInterval={onHoverInterval} onTrace={onTrace} />
+        : <div className="muted small">点击三维视图或窗面测点列表中的测点，查看该点单点结果与遮挡追查。</div>}
     </div>
   )
 }

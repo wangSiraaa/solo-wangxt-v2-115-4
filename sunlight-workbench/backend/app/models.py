@@ -81,6 +81,8 @@ class Run(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     results = relationship("RunPointResult", back_populates="run",
                            cascade="all, delete-orphan")
+    window_coverages = relationship("RunWindowCoverage", back_populates="run",
+                                    cascade="all, delete-orphan")
 
 
 class RunPointResult(Base):
@@ -93,3 +95,25 @@ class RunPointResult(Base):
     fine_samples = Column(JSON, nullable=False)        # 细步长逐样本(含遮挡物)
     summary = Column(JSON, nullable=False)
     run = relationship("Run", back_populates="results")
+
+
+class RunWindowCoverage(Base):
+    """窗面口径：一次运行内按 window_id 对**现有离散测点**分组的覆盖统计。
+
+    不是新网格、不做窗面插值；某细采样时刻无遮挡测点占比 = 该窗面
+    晒到测点数 / 同窗测点数，白天（太阳在地平线上）样本才计入分母。
+    samples 只存白天逐时刻覆盖，逐点状态/遮挡物仍以 RunPointResult 的
+    fine_samples 为唯一数据源，保证刷新后时间轴与逐点 trace 一致。
+    """
+    __tablename__ = "run_window_coverages"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    window_id = Column(String, nullable=False)         # 无 window_id 的测点
+    # 各自成组（key 为 __point_<id>），不同窗面绝不混算
+    label = Column(String, nullable=False)             # 展示名（window_id 或测点兜底名）
+    point_ids = Column(JSON, nullable=False)           # 快照内同窗测点 id（有序）
+    point_count = Column(Integer, nullable=False)
+    samples = Column(JSON, nullable=False)   # 白天逐时刻: {time,sunlit,total}
+    full_intervals = Column(JSON, nullable=False)      # 完整覆盖连续时段
+    summary = Column(JSON, nullable=False)
+    run = relationship("Run", back_populates="window_coverages")

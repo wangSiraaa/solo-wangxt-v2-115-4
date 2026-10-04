@@ -17,12 +17,13 @@ export default function App() {
   const [highlightOccluder, setHighlightOccluder] = useState(null)
   const [trace, setTrace] = useState(null)
   const [error, setError] = useState(null)
+  const [pickedTime, setPickedTime] = useState(null)  // 窗面时间轴点选时刻
 
   useEffect(() => { api.scenes().then(setScenes).catch((e) => setError(String(e))) }, [])
 
   useEffect(() => {
     if (!sceneId) return
-    setRun(null); setSelectedPointId(null); setTrace(null)
+    setRun(null); setSelectedPointId(null); setTrace(null); setPickedTime(null)
     api.scene(sceneId).then(setPayload)
     api.sunpath(sceneId, date).then(setSunpath)
   }, [sceneId, date])
@@ -34,26 +35,43 @@ export default function App() {
     const r = await api.run(sceneId, date, 5)
     const full = await api.runResult(r.run_id)
     setRun(full)
+    setPickedTime(null)
     // 结果关联快照：渲染切换到快照内容，保证结果-场景一致可追溯
     const snap = await api.snapshot(full.snapshot_id)
     setPayload(snap.payload)
   }
 
+  // 窗面时间轴点选时刻 → 同步三维时刻滑块（15min 网格取最近），
+  // 并选中午夜前/后最近的点，避免夜→昼跳跃问题
+  const pickTime = (time) => {
+    setPickedTime(time)
+    if (sunpath?.points?.length) {
+      let bi = 0
+      sunpath.points.forEach((p, i) => {
+        if (Math.abs(p.time.localeCompare(time)) <
+            Math.abs(sunpath.points[bi].time.localeCompare(time))) bi = i
+      })
+      setTimeIdx(bi)
+    }
+  }
+
+  // 当前生效时刻：窗面时间轴点选优先，否则用滑块时刻
+  const activeTime = pickedTime ?? sunpath?.points?.[timeIdx]?.time ?? null
+
   // 当前时刻各测点状态（取最近细样本）
   const pointStatus = useMemo(() => {
-    if (!run || !sunpath) return null
-    const t = sunpath.points[timeIdx]?.time
-    if (!t) return null
+    if (!run || !activeTime) return null
     const out = {}
     for (const res of run.results) {
       let best = null
       for (const s of res.fine_samples) {
-        if (!best || Math.abs(s.time.localeCompare(t)) < Math.abs(best.time.localeCompare(t))) best = s
+        if (!best || Math.abs(s.time.localeCompare(activeTime)) <
+          Math.abs(best.time.localeCompare(activeTime))) best = s
       }
       out[res.point_id] = best
     }
     return out
-  }, [run, sunpath, timeIdx])
+  }, [run, activeTime])
 
   const selectedResult = run?.results.find((r) => r.point_id === selectedPointId)
 
@@ -91,9 +109,12 @@ export default function App() {
         {error && <div className="error">{error}</div>}
         {sunpath && (
           <>
-            <label>时刻 {sunpath.points[timeIdx]?.time.slice(11, 16)}</label>
+            <label>时刻 {sunpath.points[timeIdx]?.time.slice(11, 16)}
+              {pickedTime && <span className="muted">（窗面轴点选：{pickedTime.slice(11, 16)}，三维显示取最近）</span>}
+            </label>
             <input type="range" min={0} max={sunpath.points.length - 1}
-              value={timeIdx} onChange={(e) => setTimeIdx(+e.target.value)} />
+              value={timeIdx}
+              onChange={(e) => { setTimeIdx(+e.target.value); setPickedTime(null) }} />
           </>
         )}
         {trace && (
@@ -115,9 +136,12 @@ export default function App() {
       </main>
       <aside className="right">
         <ResultsPanel
-          run={run} result={selectedResult}
+          run={run} result={selectedResult} payload={payload}
+          activeTime={activeTime}
           onHoverInterval={(iv) => setHighlightOccluder(iv?.occluder ?? null)}
-          onTrace={doTrace} />
+          onTrace={doTrace}
+          onPickTime={pickTime}
+          onSelectPoint={setSelectedPointId} />
       </aside>
     </div>
   )

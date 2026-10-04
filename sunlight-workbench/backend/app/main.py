@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from . import models, seed
-from .analysis import MeasurePointGeom, analyze_point
+from .analysis import MeasurePointGeom, analyze_point, window_coverages
 from .db import Base, engine, get_db
 from .geometry import BuildingGeom, build_scene
 from .solar import enu_to_model, sun_vector_enu, solar_positions
@@ -108,7 +108,8 @@ def _geom_from_bundle(buildings, points):
     built = build_scene(geoms)
     pts = [MeasurePointGeom(id=str(p.id), name=p.name,
                             position=tuple(to_shape(p.geom).coords[0]),
-                            normal=tuple(p.normal))
+                            normal=tuple(p.normal),
+                            window_id=p.window_id or "")
            for p in points]
     return built, pts
 
@@ -133,16 +134,26 @@ def run_analysis(req: RunRequest, db: Session = Depends(get_db)):
     db.add(run)
     db.flush()
     built, pts = _geom_from_bundle(buildings, points)
+    analyzed = []
     for pt in pts:
         r = analyze_point(built, pt, latitude=s.latitude, longitude=s.longitude,
                           tz=s.timezone, date=req.date,
                           north_offset_deg=s.north_offset_deg,
                           step_minutes=req.step_minutes)
+        analyzed.append(r)
         db.add(models.RunPointResult(
             run_id=run.id, point_id=int(pt.id),
             hourly_samples=r["hourly_samples"],
             continuous_intervals=r["continuous_intervals"],
             fine_samples=r["fine_samples"], summary=r["summary"]))
+    # 窗面口径：按 window_id 对**现有离散测点**分组（不生成新网格），
+    # 随运行一起持久化；逐点状态仍只存在 RunPointResult.fine_samples
+    for w in window_coverages(analyzed, req.step_minutes):
+        db.add(models.RunWindowCoverage(
+            run_id=run.id, window_id=w["window_id"], label=w["label"],
+            point_ids=w["point_ids"], point_count=w["point_count"],
+            samples=w["samples"], full_intervals=w["full_intervals"],
+            summary=w["summary"]))
     db.commit()
     return {"run_id": run.id, "snapshot_id": snap.id, "disclaimer": DISCLAIMER}
 
@@ -152,17 +163,46 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
     run = db.get(models.Run, run_id)
     if not run:
         raise HTTPException(404, "运行不存在")
+    point_results = [{
+        "point_id": r.point_id,
+        "summary": r.summary,
+        "hourly_samples": r.hourly_samples,
+        "continuous_intervals": r.continuous_intervals,
+        "fine_samples": r.fine_samples,
+    } for r in run.results]
+
+    rows = (db.query(models.RunWindowCoverage)
+            .filter_by(run_id=run_id).order_by(models.RunWindowCoverage.id).all())
+    if rows:
+        windows = [{
+            "window_id": w.window_id, "label": w.label,
+            "point_ids": w.point_ids, "point_count": w.point_count,
+            "samples": w.samples, "full_intervals": w.full_intervals,
+            "summary": w.summary,
+        } for w in rows]
+        coverage_source = "persisted"
+    else:
+        # 兼容旧运行：窗面统计当时未持久化，用同一份 fine_samples 即时聚合，
+        # 时间轴与逐点 trace 天然同源一致（标记为回退口径）
+        snap = db.get(models.Snapshot, run.snapshot_id)
+        meta = {p["id"]: p for p in snap.payload.get("points", [])}
+        derived_input = [{
+            "point_id": r.point_id,
+            "point_name": meta.get(r.point_id, {}).get("name", str(r.point_id)),
+            "window_id": meta.get(r.point_id, {}).get("window_id", ""),
+            "fine_samples": r.fine_samples,
+        } for r in run.results]
+        windows = window_coverages(derived_input, run.step_minutes)
+        coverage_source = "derived"
     return {
         "run_id": run.id, "scene_id": run.scene_id,
         "snapshot_id": run.snapshot_id, "date": str(run.run_date),
         "step_minutes": run.step_minutes, "disclaimer": run.disclaimer,
-        "results": [{
-            "point_id": r.point_id,
-            "summary": r.summary,
-            "hourly_samples": r.hourly_samples,
-            "continuous_intervals": r.continuous_intervals,
-            "fine_samples": r.fine_samples,
-        } for r in run.results],
+        "window_coverage_note": ("覆盖率为该窗面现有离散测点的示例统计，"
+                                 "未生成新网格、未做窗面插值；夜间不计入分母。"),
+        "window_coverage_source": coverage_source,
+        "windows": windows,
+        "results": point_results,
     }
 
 

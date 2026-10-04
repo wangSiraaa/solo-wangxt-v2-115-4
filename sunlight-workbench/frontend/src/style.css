@@ -35,3 +35,34 @@ select, button { padding: 6px; }
 .north-label { color: #ff8a80; font-size: 12px; background: rgba(0,0,0,.5);
   padding: 2px 6px; border-radius: 4px; white-space: nowrap; }
 .trace { font-size: 12px; background: #eef4ff; padding: 8px; border-radius: 6px; }
+
+/* ---- 窗面测点覆盖 ---- */
+.window-coverage h4 { margin: 8px 0 4px; }
+.panel hr { border: none; border-top: 1px solid #ddd; margin: 10px 0; }
+.win-tabs { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.win-tabs button { font-size: 12px; padding: 3px 8px; border-radius: 4px;
+  border: 1px solid #bbb; background: #fff; cursor: pointer; }
+.win-tabs button.active { background: #1b2230; color: #fff; border-color: #1b2230; }
+.cov-axis { display: flex; align-items: flex-end; gap: 0; overflow-x: auto;
+  padding-bottom: 14px; position: relative; margin-top: 6px; }
+.cov-cell-wrap { position: relative; display: inline-flex; }
+.cov-cell { width: 8px; min-width: 8px; height: 20px; display: inline-block;
+  cursor: pointer; border-right: 1px solid rgba(255,255,255,.6); }
+.cov-cell:hover { outline: 2px solid #ff4081; }
+.cov-cell.selected { outline: 2px solid #d32f2f; }
+.cov-tick { position: absolute; top: 22px; left: 0; font-size: 9px;
+  color: #888; white-space: nowrap; transform: translateX(-50%); }
+.cov-legend { display: flex; align-items: center; gap: 4px; margin: 26px 0 6px; }
+.cov-legend span { display: inline-flex; align-items: center; gap: 3px; }
+.cov-legend span[style] { width: 14px; height: 10px; border-radius: 2px; }
+.cov-detail { margin-top: 6px; display: grid; gap: 3px; }
+.cov-point { display: flex; align-items: center; gap: 6px; font-size: 12px;
+  padding: 3px 6px; border-radius: 4px; cursor: pointer; background: #f4f6fa; }
+.cov-point:hover { background: #e7edf7; }
+.cov-point .dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.cov-point.sunlit .dot { background: #f6c453; }
+.cov-point.shaded .dot { background: #4a6fa5; }
+.cov-point.night .dot { background: #999; }
+.cov-point .pname { flex: none; }
+.cov-point .pstatus { color: #555; }
+.point-result h4 { margin: 8px 0 4px; }
