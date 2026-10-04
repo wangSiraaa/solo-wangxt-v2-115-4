@@ -1,4 +1,4 @@
-"""FastAPI 入口：场景 / 测点 / 分析运行 / 快照 / 单点遮挡追查。"""
+"""FastAPI 入口：场景 / 测点 / 分析运行 / 窗面覆盖统计 / 快照 / 单点遮挡追查。"""
 from __future__ import annotations
 
 from datetime import datetime
@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
 from . import models, seed
-from .analysis import MeasurePointGeom, analyze_point
+from .analysis import MeasurePointGeom, analyze_point, analyze_windows
 from .db import Base, engine, get_db
 from .geometry import BuildingGeom, build_scene
 from .solar import enu_to_model, sun_vector_enu, solar_positions
@@ -108,7 +108,7 @@ def _geom_from_bundle(buildings, points):
     built = build_scene(geoms)
     pts = [MeasurePointGeom(id=str(p.id), name=p.name,
                             position=tuple(to_shape(p.geom).coords[0]),
-                            normal=tuple(p.normal))
+                            normal=tuple(p.normal), window_id=p.window_id or "")
            for p in points]
     return built, pts
 
@@ -133,16 +133,25 @@ def run_analysis(req: RunRequest, db: Session = Depends(get_db)):
     db.add(run)
     db.flush()
     built, pts = _geom_from_bundle(buildings, points)
+    point_results = []
     for pt in pts:
         r = analyze_point(built, pt, latitude=s.latitude, longitude=s.longitude,
                           tz=s.timezone, date=req.date,
                           north_offset_deg=s.north_offset_deg,
                           step_minutes=req.step_minutes)
+        r["point_id"] = int(pt.id)  # 与测点表主键对齐，便于前端关联
+        point_results.append(r)
         db.add(models.RunPointResult(
             run_id=run.id, point_id=int(pt.id),
             hourly_samples=r["hourly_samples"],
             continuous_intervals=r["continuous_intervals"],
             fine_samples=r["fine_samples"], summary=r["summary"]))
+    # 窗面覆盖统计（同一 window_id 分组）随运行一并保存，刷新后口径一致
+    for w in analyze_windows(point_results, step_minutes=req.step_minutes):
+        db.add(models.RunWindowResult(
+            run_id=run.id, window_id=w["window_id"],
+            point_ids=w["point_ids"], timeline=w["timeline"],
+            summary=w["summary"]))
     db.commit()
     return {"run_id": run.id, "snapshot_id": snap.id, "disclaimer": DISCLAIMER}
 
@@ -163,6 +172,12 @@ def get_run(run_id: int, db: Session = Depends(get_db)):
             "continuous_intervals": r.continuous_intervals,
             "fine_samples": r.fine_samples,
         } for r in run.results],
+        "windows": [{
+            "window_id": w.window_id,
+            "point_ids": w.point_ids,
+            "summary": w.summary,
+            "timeline": w.timeline,
+        } for w in run.window_results],
     }
 
 

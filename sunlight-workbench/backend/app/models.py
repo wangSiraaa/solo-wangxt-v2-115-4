@@ -81,6 +81,8 @@ class Run(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     results = relationship("RunPointResult", back_populates="run",
                            cascade="all, delete-orphan")
+    window_results = relationship("RunWindowResult", back_populates="run",
+                                  cascade="all, delete-orphan")
 
 
 class RunPointResult(Base):
@@ -93,3 +95,15 @@ class RunPointResult(Base):
     fine_samples = Column(JSON, nullable=False)        # 细步长逐样本(含遮挡物)
     summary = Column(JSON, nullable=False)
     run = relationship("Run", back_populates="results")
+
+
+class RunWindowResult(Base):
+    """窗面覆盖统计（随运行保存）：同一 window_id 测点组的逐时刻覆盖率。"""
+    __tablename__ = "run_window_results"
+    id = Column(Integer, primary_key=True)
+    run_id = Column(ForeignKey("runs.id", ondelete="CASCADE"), index=True)
+    window_id = Column(String, nullable=False, default="")
+    point_ids = Column(JSON, nullable=False)       # 该窗的离散测点
+    timeline = Column(JSON, nullable=False)        # 白天逐时刻覆盖率+各测点状态
+    summary = Column(JSON, nullable=False)         # 平均覆盖率/完整覆盖时段
+    run = relationship("Run", back_populates="window_results")

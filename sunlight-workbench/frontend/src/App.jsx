@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { api } from './api.js'
 import SceneViewer from './components/SceneViewer.jsx'
 import ResultsPanel from './components/ResultsPanel.jsx'
+import WindowPanel from './components/WindowPanel.jsx'
 
 const DATES = ['2026-01-15', '2026-03-20', '2026-07-15'] // 跨冬夏算例日期
 
@@ -61,6 +62,18 @@ export default function App() {
     setTrace(await api.trace(run.run_id, pointId))
   }
 
+  // 窗面时间轴点选时刻 → 三维视图太阳/射线同步到最近采样时刻
+  const pickTime = (iso) => {
+    if (!sunpath) return
+    const target = Date.parse(iso)
+    let best = 0
+    sunpath.points.forEach((p, i) => {
+      if (Math.abs(Date.parse(p.time) - target)
+          < Math.abs(Date.parse(sunpath.points[best].time) - target)) best = i
+    })
+    setTimeIdx(best)
+  }
+
   return (
     <div className="layout">
       <header>
@@ -114,6 +127,7 @@ export default function App() {
           onSelectBuilding={setHighlightOccluder} />
       </main>
       <aside className="right">
+        <WindowPanel run={run} onPickTime={pickTime} />
         <ResultsPanel
           run={run} result={selectedResult}
           onHoverInterval={(iv) => setHighlightOccluder(iv?.occluder ?? null)}

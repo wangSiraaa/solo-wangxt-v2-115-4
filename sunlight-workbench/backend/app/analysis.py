@@ -28,6 +28,7 @@ class MeasurePointGeom:
     position: tuple[float, float, float]
     normal: tuple[float, float, float]  # 窗面外法线（模型坐标）
     host_building: str | None = None
+    window_id: str = ""                 # 同一窗面的测点共用；空串视为各自独立
 
 
 def _flags_at_times(scene: BuiltScene, point: MeasurePointGeom,
@@ -107,9 +108,109 @@ def analyze_point(scene: BuiltScene, point: MeasurePointGeom, *,
     return {
         "point_id": point.id,
         "point_name": point.name,
+        "window_id": point.window_id,
         "hourly_samples": hourly,          # 逐时口径（快览）
         "continuous_intervals": to_intervals(fine),  # 连续口径（时段）
         "fine_samples": fine,
         "step_minutes": step_minutes,
         "summary": summarize(fine, step_minutes),
     }
+
+
+# ---------- 窗面测点覆盖统计（基于现有 window_id 分组，不生成新网格） ----------
+
+def _full_coverage_intervals(timeline: list[dict],
+                             step_minutes: int) -> list[dict]:
+    """完整覆盖（该窗全部测点同时晒到）的最大连续时段。
+
+    时段按细步长相邻判定延伸；夜间本就不在 timeline 中，天然被排除。
+    """
+    intervals: list[dict] = []
+    prev_time = None
+    prev_full = False
+    for e in timeline:
+        t = pd.Timestamp(e["time"])
+        full = e["sunlit"] == e["total"]
+        adjacent = (prev_time is not None
+                    and t - prev_time == pd.Timedelta(minutes=step_minutes))
+        if full and prev_full and adjacent:
+            intervals[-1]["end"] = e["time"]
+            intervals[-1]["samples"] += 1
+        elif full:
+            intervals.append({"start": e["time"], "end": e["time"],
+                              "samples": 1})
+        prev_time, prev_full = t, full
+    for iv in intervals:
+        iv["minutes"] = iv["samples"] * step_minutes
+    return intervals
+
+
+def analyze_windows(point_results: list[dict], *,
+                    step_minutes: int) -> list[dict]:
+    """窗面测点覆盖统计：同一 window_id 的测点为一组，逐时刻汇总。
+
+    口径（现有离散测点的示例统计，非面积加权、非规范条文）：
+    - 只统计有太阳的细采样时刻；夜间（全组太阳在地平线下）整行剔除，
+      **不计入分母**；
+    - 每个白天时刻 coverage = 晒到测点数 / 该窗测点总数——一个点晒到
+      不代表整窗晒到，3 个测点只晒到 1 个时覆盖率为 1/3；
+    - average_coverage = 白天各时刻 coverage 的算术平均；
+    - full_coverage_intervals = 完整覆盖（coverage=1）的最大连续时段。
+    无 window_id 的测点各自成组，不同窗面的测点绝不混算。
+    """
+    groups: dict[str, list[dict]] = {}
+    for r in point_results:
+        key = r["window_id"] or f"__point__{r['point_id']}"
+        groups.setdefault(key, []).append(r)
+
+    out = []
+    for key in sorted(groups):
+        members = sorted(groups[key], key=lambda r: str(r["point_id"]))
+        window_id = members[0]["window_id"]
+        # 同一运行共用同一时间网格，以时间为键对齐各测点细样本
+        per_point = [{s["time"]: s for s in r["fine_samples"]}
+                     for r in members]
+        common = sorted(set.intersection(*(set(p) for p in per_point)))
+        timeline = []
+        for t in common:
+            samples = [p[t] for p in per_point]
+            if all(s["status"] == STATUS_NIGHT for s in samples):
+                continue  # 夜间不计入分母
+            sunlit = sum(1 for s in samples if s["status"] == STATUS_SUNLIT)
+            total = len(samples)
+            timeline.append({
+                "time": t,
+                "elevation": max(s["elevation"] for s in samples),
+                "sunlit": sunlit,
+                "total": total,
+                "coverage": round(sunlit / total, 4),
+                "points": [{
+                    "point_id": r["point_id"], "name": r["point_name"],
+                    "status": s["status"], "occluder": s.get("occluder"),
+                } for r, s in zip(members, samples)],
+            })
+        full = _full_coverage_intervals(timeline, step_minutes)
+        avg = (round(sum(e["coverage"] for e in timeline) / len(timeline), 4)
+               if timeline else 0.0)
+        out.append({
+            "window_id": window_id,
+            "point_ids": [r["point_id"] for r in members],
+            "summary": {
+                "window_id": window_id,
+                "point_ids": [r["point_id"] for r in members],
+                "point_names": [r["point_name"] for r in members],
+                "point_count": len(members),
+                "daylight_samples": len(timeline),
+                "average_coverage": avg,
+                "full_coverage_intervals": full,
+                "full_coverage_minutes":
+                    sum(iv["samples"] for iv in full) * step_minutes,
+                "longest_full_coverage_minutes":
+                    max((iv["samples"] for iv in full), default=0) * step_minutes,
+                "criterion": ("示例口径：窗面覆盖率=晒到测点数/该窗测点总数，"
+                              "为现有离散测点的示例统计（非面积加权），"
+                              "不构成规划合规结论"),
+            },
+            "timeline": timeline,
+        })
+    return out
